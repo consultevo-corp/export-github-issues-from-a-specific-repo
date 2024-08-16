@@ -1,0 +1,104 @@
+function fetchGitHubIssues() {
+  const token = 'github token'; // Replace with your GitHub token
+  const owner = 'repo owner'; // Replace with the repository owner
+  const repo = 'repo name'; // Replace with the repository name
+
+  try {
+    const openIssues = getIssuesFromRepo(token, owner, repo, 'open');
+    const closedIssues = getIssuesFromRepo(token, owner, repo, 'closed');
+    const allIssues = openIssues.concat(closedIssues);
+
+    const issueData = allIssues.map(issue => {
+      const nodeId = issue.node_id;
+      const issueDetails = getIssueDetailsFromGraphQL(token, nodeId);
+      return {
+        title: issue.title,
+        node_id: nodeId,
+        open_date: issue.created_at,
+        close_date: issue.closed_at || '',
+        assignee: issue.assignee ? issue.assignee.login : 'Unassigned',
+        link: issue.html_url,
+        body: issue.body || '',
+        details: issueDetails
+      };
+    });
+
+    // Output to specific Google Sheet and sheet
+    const spreadsheetId = '1yL_0JBekdyUAghJkYtGGroSOLzn_N8JG3HR57t4nX9c'; // Replace with your spreadsheet ID
+    const sheetName = 'Sheet1'; // Replace with your sheet name
+    const sheet = SpreadsheetApp.openById(spreadsheetId).getSheetByName(sheetName);
+    
+    if (!sheet) {
+      throw new Error(`Sheet with name ${sheetName} not found in spreadsheet ${spreadsheetId}`);
+    }
+
+    sheet.clear();
+    sheet.appendRow(['Issue Title', 'Node ID', 'Open Date', 'Close Date', 'Assignee', 'Issue Link', 'Body', 'Details']);
+    issueData.forEach(data => {
+      sheet.appendRow([data.title, data.node_id, data.open_date, data.close_date, data.assignee, data.link, data.body, JSON.stringify(data.details)]);
+    });
+  } catch (e) {
+    Logger.log(e.toString());
+  }
+}
+
+function getIssuesFromRepo(token, owner, repo, state) {
+  const url = `https://api.github.com/repos/${owner}/${repo}/issues?state=${state}`;
+  Logger.log(`Fetching ${state} issues from URL: ${url}`);
+  
+  const options = {
+    method: 'get',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github.v3+json'
+    },
+    muteHttpExceptions: true
+  };
+  
+  const response = UrlFetchApp.fetch(url, options);
+  Logger.log(`Response code: ${response.getResponseCode()}`);
+  Logger.log(`Response content: ${response.getContentText()}`);
+  
+  if (response.getResponseCode() !== 200) {
+    throw new Error(`Error fetching ${state} issues: ${response.getContentText()}`);
+  }
+  
+  return JSON.parse(response.getContentText());
+}
+
+function getIssueDetailsFromGraphQL(token, nodeId) {
+  const url = 'https://api.github.com/graphql';
+  const query = `
+    query {
+      node(id: "${nodeId}") {
+        ... on Issue {
+          title
+          body
+          createdAt
+          updatedAt
+        }
+      }
+    }
+  `;
+  
+  const options = {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github.v3+json'
+    },
+    payload: JSON.stringify({ query }),
+    muteHttpExceptions: true
+  };
+  
+  const response = UrlFetchApp.fetch(url, options);
+  Logger.log(`GraphQL response code: ${response.getResponseCode()}`);
+  Logger.log(`GraphQL response content: ${response.getContentText()}`);
+  
+  if (response.getResponseCode() !== 200) {
+    throw new Error(`Error fetching issue details: ${response.getContentText()}`);
+  }
+  
+  return JSON.parse(response.getContentText());
+}
